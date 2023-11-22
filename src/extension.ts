@@ -1,6 +1,7 @@
 import * as childProcess from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import { promisify } from "node:util";
 import * as vscode from "vscode";
 import * as xml2js from "xml2js";
 
@@ -8,6 +9,8 @@ import path from "node:path";
 import { CppcheckDataProvider } from "./cppcheck_data_provider";
 import { CppcheckError, CppcheckProjectFile } from "./types";
 import { ensure_array } from "./utils";
+
+const readFilePromise = promisify(fs.readFile);
 
 const DECORATION = vscode.window.createTextEditorDecorationType({
     backgroundColor: "red",
@@ -35,29 +38,44 @@ function registerRunCppcheckCommand(
     );
 }
 
-function runCppcheck(
+async function runCppcheck(
     output: vscode.OutputChannel,
     cppcheckProvider: CppcheckDataProvider,
 ) {
-    vscode.window.withProgress({
+    await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: "Running Cppcheck [See Output](command:cppcheck.showOutput)",
         cancellable: false,
-    }, (_progress, _token) => executeCppcheck(output, cppcheckProvider));
+    }, async (_progress, _token) => {
+        try {
+            await executeCppcheck(output, cppcheckProvider);
+        }
+        catch(err) {
+            if (err instanceof Error) {
+                vscode.window.showErrorMessage(err.message);
+            }
+            else {
+                vscode.window.showErrorMessage(String(err));
+            }
+        }
+    });
 }
 
-function executeCppcheck(
+async function executeCppcheck(
     output: vscode.OutputChannel,
     cppcheckProvider: CppcheckDataProvider,
 ): Promise<void> {
-    return new Promise<void>(async (resolve, reject) => {
+    await new Promise<void>(async (resolve, reject) => {
         const workspaceFolder = vscode.workspace.workspaceFolders![0].uri.path;
 
         let result = "";
         const config = vscode.workspace.getConfiguration("cppcheck");
         const cmd = config.get("cppcheckPath") as string;
         const projectFilePath = config.get("projectFile") as string;
-        const projectFile = await loadCppcheckProjectFile(workspaceFolder, projectFilePath);
+        const projectFile = await loadCppcheckProjectFile(workspaceFolder, projectFilePath).catch(reject);
+        if (!projectFile) {
+            return;
+        }
 
         const cpus = os.availableParallelism();
         const child = childProcess.spawn(
@@ -74,11 +92,18 @@ function executeCppcheck(
             }
         );
 
+        child.on("error", reject);
         child.stdout.on("data", (chunk: Buffer) => output.append(chunk.toString()));
         child.stderr.on("data", (chunk: Buffer) => result += chunk.toString());
         child.on("close", (code: number) => {
             output.append("DONE!");
-            processCppcheckResults(code, projectFile, result, cppcheckProvider, resolve, reject)
+            try {
+                processCppcheckResults(code, projectFile, result, cppcheckProvider);
+                resolve();
+            }
+            catch {
+                reject();
+            }
         });
     });
 }
@@ -88,7 +113,10 @@ async function loadCppcheckProjectFile(
     projectFilePath: string,
 ): Promise<CppcheckProjectFile>
 {
-    var projectFileXml = fs.readFileSync(path.join(workspaceFolder, projectFilePath));
+    var projectFileXml = (
+        await readFilePromise(path.join(workspaceFolder, projectFilePath))
+    ).toString();
+
     return await xml2js.parseStringPromise(projectFileXml, {
         explicitRoot: false,
         explicitArray: false,
@@ -96,29 +124,24 @@ async function loadCppcheckProjectFile(
     });
 }
 
-function processCppcheckResults(
+async function processCppcheckResults(
     _code: number,
     projectFile: CppcheckProjectFile,
     result: string,
     cppcheckProvider: CppcheckDataProvider,
-    resolve: () => void,
-    reject: () => void,
 ) {
-    xml2js.parseStringPromise(result, {
+    var resultJson = await xml2js.parseStringPromise(result, {
         explicitRoot: false,
         explicitArray: false,
         mergeAttrs: true,
-    }).then(resultJson => {
-        if (!resultJson) {
-            return reject();
-        }
-        const errors: CppcheckError[] = resultJson.errors.error || [];
-        errors.forEach(error => {
-            error.location = ensure_array(error.location);
-        });
-        cppcheckProvider.loadErrors(projectFile, errors);
-        resolve();
     });
+
+    const errors: CppcheckError[] = resultJson.errors.error || [];
+    errors.forEach(error => {
+        error.location = ensure_array(error.location);
+    });
+
+    cppcheckProvider.loadErrors(projectFile, errors);
 }
 
 function registerOpenFileCommand(context: vscode.ExtensionContext) {

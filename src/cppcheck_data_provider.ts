@@ -7,11 +7,12 @@ import {
     CppcheckLocationItem
 } from "./cppcheck_tree_item";
 import { SeverityNumber } from "./severity";
-import { CppcheckError } from "./types";
+import { CppcheckError, CppcheckProjectFile } from "./types";
 
 
 export class CppcheckDataProvider implements vscode.TreeDataProvider<CppcheckItem>
 {
+    #projectFile: CppcheckProjectFile = {};
     #errors: CppcheckError[] = [];
 
     #onDidChangeTreeData = new vscode.EventEmitter<CppcheckItem | undefined | null | void>();
@@ -19,12 +20,14 @@ export class CppcheckDataProvider implements vscode.TreeDataProvider<CppcheckIte
 
     getAbsPath(file: string): string
     {
-        var root = path.join(vscode.workspace.workspaceFolders![0].uri.path, "src");
+        var projectRoot = this.#projectFile.root?.name ?? ".";
+        var root = path.join(vscode.workspace.workspaceFolders![0].uri.path, projectRoot);
         return path.join(root, file);
     }
 
-    loadErrors(errors: CppcheckError[]): void
+    loadErrors(projectFile: CppcheckProjectFile, errors: CppcheckError[]): void
     {
+        this.#projectFile = projectFile;
         this.#errors = errors;
         this.#onDidChangeTreeData.fire();
     }

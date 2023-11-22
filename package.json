@@ -4,8 +4,12 @@
   "description": "an extension to collect and display Cppcheck results in vscode",
   "version": "0.0.1",
   "publisher": "alevine",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Aldlevine/vscode_cppcheck.git"
+  },
   "engines": {
-    "vscode": "^1.74.0"
+    "vscode": "^1.84.2"
   },
   "categories": [
     "Linters"
@@ -79,6 +83,7 @@
     "@types/node": "^20.9.3",
     "@types/vscode": "^1.84.2",
     "@types/xml2js": "^0.4.14",
+    "@vscode/vsce": "^2.22.0",
     "tslint": "^6.1.3",
     "typescript": "^5.3.2"
   },

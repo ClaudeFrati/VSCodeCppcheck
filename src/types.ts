@@ -1,3 +1,9 @@
+export type CppcheckProjectFile = {[key: string]: any} & {
+    root?: {
+        name: string
+    }
+}
+
 export type CppcheckErrorLocation = {
     file: string
     line: string

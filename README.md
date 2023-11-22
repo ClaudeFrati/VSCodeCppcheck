@@ -24,6 +24,16 @@ VSCode Cppcheck is a Visual Studio Code extension that integrates the Cppcheck s
 - A progress notification will appear during the analysis. Once complete, the tree view will display detected errors.
 - Click on errors to navigate directly to the relevant location in your code.
 
+## Roadmap
+
+The future of VSCode Cppcheck is exciting, and we have several enhancements in the pipeline:
+
+- [ ] **Customizable Cppcheck Command Execution**: Introduce settings to give users more control over how the Cppcheck command is executed.
+- [ ] **Error View Options**: Add a toggle to switch between a tree and list view for displaying errors.
+- [ ] **Inline Suppressions**: Implement functionality to insert inline suppressions directly into the code.
+- [ ] **Welcome Screen for Missing Project File**: Create a welcome screen that guides users when a project file is missing.
+- [ ] **Cppcheck Project File Generator/Configurator**: Explore the possibility of integrating a project file generator/configurator to eliminate the dependency on the Cppcheck GUI. This feature is under consideration as it requires understanding and implementing the Cppcheck project file specification.
+
 ## Contributing
 
 Contributions are welcome!

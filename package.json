@@ -61,8 +61,8 @@
           },
           "cppcheck.projectFile": {
             "type": "string",
-            "default": "${workspaceFolder}/cppcheck.cppcheck",
-            "description": "The Cppcheck project configuration file. This can be easily configured with the Cppcheck GUI"
+            "default": "cppcheck.cppcheck",
+            "description": "The Cppcheck project configuration file, relative to the project root. This can be easily configured with the Cppcheck GUI"
           }
         }
       }

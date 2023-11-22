@@ -1,6 +1,5 @@
 import * as vscode from "vscode";
-import { IconDef } from "./icons";
-import { getIcon } from "./icons";
+import { IconDef, getIcon } from "./icons";
 
 export const SeverityNumber: { [key: string]: number; } = {
     "information": 0,

@@ -10,7 +10,7 @@ import { SeverityNumber } from "./severity";
 import { CppcheckError } from "./types";
 
 
-export class CppcheckProvider implements vscode.TreeDataProvider<CppcheckItem>
+export class CppcheckDataProvider implements vscode.TreeDataProvider<CppcheckItem>
 {
     #errors: CppcheckError[] = [];
 

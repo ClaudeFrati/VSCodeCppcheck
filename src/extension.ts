@@ -1,96 +1,109 @@
 import * as childProcess from "node:child_process";
 import * as os from "node:os";
 import * as vscode from "vscode";
-
 import * as xml2js from "xml2js";
 
-import { CppcheckProvider } from "./cppcheck_provider";
+import { CppcheckDataProvider } from "./cppcheck_data_provider";
 import { CppcheckError } from "./types";
+import { ensure_array } from "./utils";
 
-function ensure_array<T>(value: T | T[]): T[]
-{
-    if (Array.isArray(value))
-    {
-        return value;
-    }
-    return [value];
-}
-
-const DECORATION = vscode.window.createTextEditorDecorationType(
-    {
-        backgroundColor: "red",
-    }
-)
+const DECORATION = vscode.window.createTextEditorDecorationType({
+    backgroundColor: "red",
+});
 
 export function activate(context: vscode.ExtensionContext): void {
     const output = vscode.window.createOutputChannel("cppcheck");
-
-    const cppcheckErrorProvider = new CppcheckProvider();
+    const cppcheckErrorProvider = new CppcheckDataProvider();
     vscode.window.registerTreeDataProvider("cppcheck", cppcheckErrorProvider);
 
-    // Run Command
+    registerRunCppcheckCommand(context, output, cppcheckErrorProvider);
+
+    registerOpenFileCommand(context);
+
+    registerShowOutputCommand(context, output);
+}
+
+function registerRunCppcheckCommand(
+    context: vscode.ExtensionContext,
+    output: vscode.OutputChannel,
+    cppcheckProvider: CppcheckDataProvider,
+) {
     context.subscriptions.push(
-        vscode.commands.registerCommand(
-            "cppcheck.run",
-            () => {
-                vscode.window.withProgress({
-                    location: vscode.ProgressLocation.Notification,
-                    title: "Running Cppcheck [See Output](command:cppcheck.showOutput)",
-                    cancellable: false,
-                }, (_progress, _token) => {
-                    return new Promise<void>((resolve, reject) => {
-                        let result = "";
-                        const workspaceFolder = vscode.workspace.workspaceFolders![0].uri.path;
-                        const config = vscode.workspace.getConfiguration("cppcheck");
-                        const cpus = os.availableParallelism();
-                        const child = childProcess.spawn(
-                            config.get("cppcheckPath") as string,
-                            [
-                                "--inline-suppr",
-                                "--project=project.cppcheck",
-                                "--enable=all",
-                                "--xml",
-                                "-j",
-                                `${cpus}`,
-                            ],
-                            {
-                                cwd: workspaceFolder
-                            }
-                        );
-
-                        child.stdout.on("data", (chunk: Buffer) => {
-                            output.append(chunk.toString());
-                        });
-
-                        child.stderr.on("data", (chunk: Buffer) => {
-                            result += chunk.toString();
-                        });
-
-                        child.on("close", async (code: number) => {
-                            output.append("DONE!");
-                            const resultJson = await xml2js.parseStringPromise(result, {
-                                explicitRoot: false,
-                                explicitArray: false,
-                                mergeAttrs: true,
-                            });
-                            if (!resultJson) {
-                                return reject();
-                            }
-                            const errors: CppcheckError[] = resultJson.errors.error || [];
-                            errors.forEach(error => {
-                                error.location = ensure_array(error.location);
-                            })
-                            cppcheckErrorProvider.loadErrors(errors);
-                            resolve();
-                        });
-
-                    });
-                });
-            }
-        )
+        vscode.commands.registerCommand("cppcheck.run", () => runCppcheck(output, cppcheckProvider))
     );
+}
 
-    // Open File Command
+function runCppcheck(
+    output: vscode.OutputChannel,
+    cppcheckProvider: CppcheckDataProvider,
+) {
+    vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: "Running Cppcheck [See Output](command:cppcheck.showOutput)",
+        cancellable: false,
+    }, (_progress, _token) => executeCppcheck(output, cppcheckProvider));
+}
+
+function executeCppcheck(
+    output: vscode.OutputChannel,
+    cppcheckProvider: CppcheckDataProvider,
+): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+        let result = "";
+        const config = vscode.workspace.getConfiguration("cppcheck");
+        const cmd = config.get("cppcheckPath") as string;
+        const projectFile = config.get("projectFile") as string;
+
+        const cpus = os.availableParallelism();
+        const workspaceFolder = vscode.workspace.workspaceFolders![0].uri.path;
+        const child = childProcess.spawn(
+            cmd,
+            [
+                "--inline-suppr",
+                `--project=${projectFile}`,
+                "--enable=all",
+                "--xml",
+                "-j",
+                `${cpus}`,
+            ],
+            {
+                cwd: workspaceFolder,
+            }
+        );
+
+        child.stdout.on("data", (chunk: Buffer) => output.append(chunk.toString()));
+        child.stderr.on("data", (chunk: Buffer) => result += chunk.toString());
+        child.on("close", (code: number) => processCppcheckResults(code, result, output, cppcheckProvider, resolve, reject));
+    });
+}
+
+function processCppcheckResults(
+    _code: number,
+    result: string,
+    output: vscode.OutputChannel,
+    cppcheckProvider: CppcheckDataProvider,
+    resolve: () => void,
+    reject: () => void,
+) {
+    output.append("DONE!");
+    xml2js.parseStringPromise(result, {
+        explicitRoot: false,
+        explicitArray: false,
+        mergeAttrs: true,
+    }).then(resultJson => {
+        if (!resultJson) {
+            return reject();
+        }
+        const errors: CppcheckError[] = resultJson.errors.error || [];
+        errors.forEach(error => {
+            error.location = ensure_array(error.location);
+        });
+        cppcheckProvider.loadErrors(errors);
+        resolve();
+    });
+}
+
+function registerOpenFileCommand(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand(
             "cppcheck.openFile",
@@ -112,8 +125,12 @@ export function activate(context: vscode.ExtensionContext): void {
             }
         )
     );
+}
 
-    // Show Output Command
+function registerShowOutputCommand(
+    context: vscode.ExtensionContext,
+    output: vscode.OutputChannel,
+) {
     context.subscriptions.push(
         vscode.commands.registerCommand(
             "cppcheck.showOutput",
@@ -121,8 +138,7 @@ export function activate(context: vscode.ExtensionContext): void {
                 output.show()
             }
         )
-    )
-
+    );
 }
 
 export function deactivate(): void {}

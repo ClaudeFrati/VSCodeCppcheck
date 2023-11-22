@@ -1,16 +1,15 @@
-import * as path from "node:path";
 import * as vscode from "vscode";
 
 import { SeverityIcons } from "./severity";
 import { CppcheckError, CppcheckErrorLocation } from "./types";
 
-import type { CppcheckProvider } from "./cppcheck_provider";
+import type { CppcheckDataProvider } from "./cppcheck_data_provider";
 import { getIcon } from "./icons";
 
 
 export class CppcheckLocationItem extends vscode.TreeItem {
     constructor(
-        public readonly provider: CppcheckProvider,
+        public readonly provider: CppcheckDataProvider,
         public readonly location: CppcheckErrorLocation
     ) {
         super(location.info ?? "Location");
@@ -34,7 +33,7 @@ export class CppcheckLocationItem extends vscode.TreeItem {
 
 export class CppcheckErrorItem extends vscode.TreeItem {
     constructor(
-        public readonly provider: CppcheckProvider,
+        public readonly provider: CppcheckDataProvider,
         public readonly error: CppcheckError
     ) {
         super(
@@ -61,7 +60,7 @@ export class CppcheckErrorItem extends vscode.TreeItem {
 
 export class CppcheckFileItem extends vscode.TreeItem {
     constructor(
-        public readonly provider: CppcheckProvider,
+        public readonly provider: CppcheckDataProvider,
         public readonly filename: string
     ) {
         super(filename, vscode.TreeItemCollapsibleState.Expanded);

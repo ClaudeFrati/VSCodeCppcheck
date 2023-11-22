@@ -1,4 +1,3 @@
-
 export type CppcheckErrorLocation = {
     file: string
     line: string

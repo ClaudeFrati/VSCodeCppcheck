@@ -2,7 +2,7 @@
   "name": "cppcheck",
   "displayName": "VSCode Cppcheck",
   "description": "an extension to collect and display Cppcheck results in VSCode",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "alevine",
   "repository": {
     "type": "git",

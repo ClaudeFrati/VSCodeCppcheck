@@ -15,7 +15,7 @@
     "Linters"
   ],
   "activationEvents": [],
-  "main": "./out/extension.js",
+  "main": "./out/activate.js",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -37,9 +37,16 @@
     "menus": {
       "view/title": [
         {
-          "command": "cppcheck.run",
+          "command": "cppcheck.reload",
           "when": "view == cppcheck",
           "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "cppcheck.run",
+          "when": "view == cppcheck && viewItem == projectfile",
+          "group": "inline"
         }
       ]
     },
@@ -52,11 +59,16 @@
       {
         "command": "cppcheck.openFile",
         "title": "Cppcheck: Open File"
+      },
+      {
+        "command": "cppcheck.reload",
+        "title": "Cppcheck: Reload",
+        "icon": "$(refresh)"
       }
     ],
     "configuration": [
       {
-        "title": "cppcheck",
+        "title": "Cppcheck",
         "properties": {
           "cppcheck.cppcheckPath": {
             "type": "string",

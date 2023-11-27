@@ -16,7 +16,8 @@ const readFilePromise = promisify(fs.readFile);
 export class CppcheckExtension
 {
     readonly #decoration = vscode.window.createTextEditorDecorationType({
-        backgroundColor: "red",
+        backgroundColor: new vscode.ThemeColor("cppcheck.location"),
+        overviewRulerColor: new vscode.ThemeColor("cppcheck.location"),
     });
 
     readonly #context: vscode.ExtensionContext;
@@ -103,20 +104,49 @@ export class CppcheckExtension
 
             let result = "";
             const config = vscode.workspace.getConfiguration("cppcheck");
+
             const cmd = config.get("cppcheckPath") as string;
+            const enableItems = config.get("args.enable") as string[];
+            const inconclusive = config.get("args.inconclusive") as boolean;
+            const inlineSuppr = config.get("args.inlineSuppr") as boolean;
+            const std = config.get("args.std") as string;
+            const jobs = config.get("args.jobs") as number;
+
             const projectFileUri = projectFileUri_ ?? vscode.Uri.parse(Object.keys(this.#projectFiles)[0]);
+
+            const args = [
+                `--project=${projectFileUri.path}`,
+                "--xml",
+            ];
+
+            if (enableItems.length > 0) {
+                args.push(`--enable=${enableItems.join(",")}`);
+            }
+
+            if (inconclusive) {
+                args.push("--inconclusive");
+            }
+
+            if (inlineSuppr) {
+                args.push("--inline-suppr");
+            }
+
+            if (std.length > 0) {
+                args.push(`--std=${std}`);
+            }
+
+            args.push("-j")
+            if (jobs <= 0) {
+                const cpus = os.availableParallelism();
+                args.push(`${cpus}`);
+            }
+            else {
+                args.push(`${jobs}`);
+            }
 
             const cpus = os.availableParallelism();
             const child = childProcess.spawn(
-                cmd,
-                [
-                    "--inline-suppr",
-                    `--project=${projectFileUri.path}`,
-                    "--enable=all",
-                    "--xml",
-                    "-j", `${cpus}`,
-                ],
-                {
+                cmd, args, {
                     cwd: workspaceFolder,
                 }
             );

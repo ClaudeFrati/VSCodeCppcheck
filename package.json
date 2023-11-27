@@ -50,6 +50,18 @@
         }
       ]
     },
+    "colors": [
+      {
+        "id": "cppcheck.location",
+        "description": "Color for highlighting current error location in text editor.",
+        "defaults": {
+          "dark": "editorError.foreground",
+          "light": "editorError.border",
+          "highContrast": "editorError.foreground",
+          "highContrastLight": "editorError.foreground"
+        }
+      }
+    ],
     "commands": [
       {
         "command": "cppcheck.run",
@@ -72,13 +84,56 @@
         "properties": {
           "cppcheck.cppcheckPath": {
             "type": "string",
-            "default": "cppcheck",
-            "description": "The path to the cppcheck command, defaults to `cppcheck` on `PATH`"
+            "markdownDescription": "The path to the cppcheck command, defaults to `cppcheck` on `PATH`",
+            "default": "cppcheck"
           },
-          "cppcheck.projectFile": {
+          "cppcheck.args.enable": {
+            "type": "array",
+            "markdownDescription": "The checks to be enabled (passed to cli via `--enable`)",
+            "items": {
+              "type": "string",
+              "enum": [
+                "all",
+                "warning",
+                "style",
+                "performance",
+                "portability",
+                "information",
+                "unusedFunction",
+                "missingInclude"
+              ]
+            },
+            "default": [
+              "all"
+            ]
+          },
+          "cppcheck.args.inconclusive": {
+            "type": "boolean",
+            "markdownDescription": "Report inconclusive analyses (passed to cli via `--inconclusive`)",
+            "default": false
+          },
+          "cppcheck.args.inlineSuppr": {
+            "type": "boolean",
+            "markdownDescription": "Enable inline suppressions (passed to cli via `--inline-suppr`)",
+            "default": true
+          },
+          "cppcheck.args.jobs": {
+            "type": "integer",
+            "markdownDescription": "The number of jobs to spawn (passed to cli via `-j`).\n\nSpecify 0 to select # based on host system.",
+            "default": 0
+          },
+          "cppcheck.args.std": {
             "type": "string",
-            "default": "cppcheck.cppcheck",
-            "description": "The Cppcheck project configuration file, relative to the project root. This can be easily configured with the Cppcheck GUI"
+            "markdownDescription": "The language standard to use (passed to cli via `--std`)",
+            "enum": [
+              "c89",
+              "c99",
+              "c11",
+              "c++03",
+              "c++11",
+              "c++17",
+              "c++20"
+            ]
           }
         }
       }

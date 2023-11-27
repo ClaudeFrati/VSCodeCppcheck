@@ -36,6 +36,7 @@ The future of VSCode Cppcheck is exciting, and we have several enhancements in t
 - [ ] **Welcome Screen for Missing Project File**: Create a welcome screen that guides users when a project file is missing.
 - [ ] **Cppcheck Project File Generator/Configurator**: Explore the possibility of integrating a project file generator/configurator to eliminate the dependency on the Cppcheck GUI. This feature is under consideration as it requires understanding and implementing the Cppcheck project file specification.
 - [ ] **Support Additional Project File Types**: The *.cppcheck file is primarily used by the Cppcheck GUI. The Cppcheck CLI also accepts a variety of other formats in the `--project` argument. Consider implementing direct support for these formats, however, for now users should be able to specify one of those formats within a *.cppcheck file.
+- [ ] **Add Error Count Badges**: Add some error count badges to the tree view for easier error parsing.
 
 ## Contributing
 

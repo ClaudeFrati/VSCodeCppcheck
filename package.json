@@ -82,6 +82,29 @@
           }
         }
       }
+    ],
+    "languages": [
+      {
+        "id": "cppcheck",
+        "icon": {
+          "light": "./assets/file_icon_light.svg",
+          "dark": "./assets/file_icon_dark.svg"
+        },
+        "extensions": [
+          ".cppcheck"
+        ],
+        "aliases": [
+          "Cppcheck",
+          "cppcheck"
+        ]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "cppcheck",
+        "scopeName": "text.xml.cppcheck",
+        "path": "./syntaxes/cppcheck.tmLanguage.json"
+      }
     ]
   },
   "scripts": {

@@ -1,0 +1,9 @@
+{
+    "scopeName": "text.xml.cppcheck",
+    "patterns": [
+        {
+            "include": "text.xml"
+        }
+    ],
+    "fileTypes": []
+}

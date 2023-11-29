@@ -24,17 +24,25 @@ export type CppcheckProjectFile = {[key: string]: any} & {
     }
 }
 
-export type CppcheckErrorLocation = {
-    file: string
+export type CppcheckErrorLocation<L = string> = {
+    file: L
     line: string
     column: string
     info?: string
 };
 
-export type CppcheckError = {
+export type CppcheckErrorSeverity =
+    "information" |
+    "style" |
+    "portability" |
+    "performance" |
+    "warning" |
+    "error";
+
+export type CppcheckError<L = string> = {
     id: string
-    location: CppcheckErrorLocation[]
+    location: CppcheckErrorLocation<L>[]
     msg: string
-    severity: string
+    severity: CppcheckErrorSeverity
     verbose: string
 };

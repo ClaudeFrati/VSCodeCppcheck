@@ -5,9 +5,8 @@ import { promisify } from "node:util";
 import * as vscode from "vscode";
 import * as xml2js from "xml2js";
 
-import { CppcheckTreeDataProvider } from "./tree_data_provider";
-import { CppcheckProjectFileItem } from "./tree_item";
-import { CppcheckError, CppcheckProjectFile } from "./types";
+import path from "node:path";
+import { CppcheckError, CppcheckErrorSeverity, CppcheckProjectFile } from "./types";
 import { ensureArray } from "./utils";
 
 const readFilePromise = promisify(fs.readFile);
@@ -15,14 +14,10 @@ const readFilePromise = promisify(fs.readFile);
 
 export class CppcheckExtension
 {
-    readonly #decoration = vscode.window.createTextEditorDecorationType({
-        backgroundColor: new vscode.ThemeColor("cppcheck.location"),
-        overviewRulerColor: new vscode.ThemeColor("cppcheck.location"),
-    });
-
     readonly #context: vscode.ExtensionContext;
     readonly #output: vscode.OutputChannel;
-    readonly #treeDataProvider: CppcheckTreeDataProvider;
+    readonly #diagnosticCollection: vscode.DiagnosticCollection;
+    readonly #languageStatusItem: vscode.LanguageStatusItem;
 
     #projectFiles: {[key: string]: CppcheckProjectFile} = {};
 
@@ -31,29 +26,28 @@ export class CppcheckExtension
     )
     {
         this.#context = context;
-        this.#output = vscode.window.createOutputChannel("Cppcheck");
-        this.#treeDataProvider = new CppcheckTreeDataProvider();
+        [
+            this.#output = vscode.window.createOutputChannel("Cppcheck"),
+            this.#diagnosticCollection = vscode.languages.createDiagnosticCollection("Cppcheck"),
+            this.#languageStatusItem = this.#createLanguageStatusItem()
+        ].forEach(
+            disposable => context.subscriptions.push(disposable)
+        );
     }
 
     async activate() {
-        vscode.window.registerTreeDataProvider("cppcheck", this.#treeDataProvider);
-
         this.#registerRunCommand();
 
-        this.#registerOpenFileCommand();
-
-        this.#registerShowOutputCommand();
-
-        this.#registerReloadCommand();
-
         await this.#registerProjectFileWatcher();
+
+        await this.#registerSourceFileWatcher();
 
         await this.#collectProjectFiles();
     }
 
     async deactivate() {}
 
-    async #registerProjectFileWatcher() {
+    async #registerProjectFileWatcher(): Promise<void> {
         var fsWatcher = vscode.workspace.createFileSystemWatcher("**/*.cppcheck", false, false, false);
         this.#context.subscriptions.push(fsWatcher);
 
@@ -70,32 +64,62 @@ export class CppcheckExtension
         });
     }
 
+    #createLanguageStatusItem(): vscode.LanguageStatusItem {
+        var languageStatusItem = vscode.languages.createLanguageStatusItem("Cppcheck", {
+            language: "cpp"
+        });
+        languageStatusItem.busy = false;
+        languageStatusItem.name = "Cppcheck";
+        languageStatusItem.command = {
+            command: "cppcheck.run",
+            title: "Run Now"
+        }
+        languageStatusItem.text = "C$(plus-plus-check)";
+        languageStatusItem.detail = "Ready";
+        return languageStatusItem;
+    }
+
+    async #registerSourceFileWatcher(): Promise<void> {
+        var fsWatcher = vscode.workspace.createFileSystemWatcher("**/*.{cpp,c,hpp,h,tpp,ipp}", false, false, false);
+        this.#context.subscriptions.push(fsWatcher);
+
+        fsWatcher.onDidCreate((uri) => {
+            this.#runCppcheck();
+        });
+
+        fsWatcher.onDidChange((uri) => {
+            this.#runCppcheck();
+        });
+
+        fsWatcher.onDidDelete((file) => {
+            this.#runCppcheck();
+        });
+    }
+
     #registerRunCommand() {
         this.#context.subscriptions.push(
             vscode.commands.registerCommand("cppcheck.run",
-                (projectFile?: CppcheckProjectFileItem) => this.#runCppcheck(projectFile?.uri)
+                (projectFile?: vscode.Uri) => this.#runCppcheck(projectFile)
             )
         );
     }
 
-    async #runCppcheck(projectFile?: vscode.Uri) {
-        await vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: "Running Cppcheck [View Output](command:cppcheck.showOutput)",
-            cancellable: true,
-        }, async (_progress, cancellationToken) => {
-            try {
-                await this.#executeCppcheck(projectFile, cancellationToken);
+    async #runCppcheck(projectFile?: vscode.Uri): Promise<void> {
+        this.#languageStatusItem.busy = true;
+
+        try {
+            await this.#executeCppcheck(projectFile);
+        }
+        catch(err) {
+            if (err instanceof Error) {
+                vscode.window.showErrorMessage(err.message);
             }
-            catch(err) {
-                if (err instanceof Error) {
-                    vscode.window.showErrorMessage(err.message);
-                }
-                else {
-                    vscode.window.showErrorMessage(String(err));
-                }
+            else {
+                vscode.window.showErrorMessage(String(err));
             }
-        });
+        }
+
+        this.#languageStatusItem.busy = false;
     }
 
     async #executeCppcheck(projectFileUri_?: vscode.Uri, cancellationToken?: vscode.CancellationToken): Promise<void> {
@@ -144,7 +168,6 @@ export class CppcheckExtension
                 args.push(`${jobs}`);
             }
 
-            const cpus = os.availableParallelism();
             const child = childProcess.spawn(
                 cmd, args, {
                     cwd: workspaceFolder,
@@ -161,7 +184,7 @@ export class CppcheckExtension
             child.on("close", (code: number) => {
                 this.#output.append("DONE!");
                 try {
-                    this.#processCppcheckResults(code, projectFileUri, result, this.#treeDataProvider);
+                    this.#processCppcheckResults(code, projectFileUri, result);
                     resolve();
                 }
                 catch {
@@ -171,11 +194,99 @@ export class CppcheckExtension
         });
     }
     
+    async #getLocationWordRange(uri: vscode.Uri, line: number, column: number): Promise<vscode.Range> {
+        const document = await vscode.workspace.openTextDocument(uri);
+        return (
+            document.getWordRangeAtPosition(new vscode.Position(line, column)) ??
+            new vscode.Range(
+                new vscode.Position(line, column),
+                new vscode.Position(line, column + 1)
+            )
+        );
+    }
+
+    async #convertCppcheckErrorsToDiagnostics(cppcheckErrors: CppcheckError<vscode.Uri>[]): Promise<[vscode.Uri, vscode.Diagnostic[]][]> {
+        const diagnosticsByFile = new Map<vscode.Uri, vscode.Diagnostic[]>();
+
+        await Promise.all(cppcheckErrors.map(async (error) => {
+            if (error.location.length == 0) {
+                return;
+            }
+
+            const primaryLocation = error.location[0];
+            const line = Math.max(Number(primaryLocation.line) - 1, 0);
+            const column = Math.max(Number(primaryLocation.column) - 1, 0);
+            const range = await this.#getLocationWordRange(primaryLocation.file, line, column);
+            const diagnostic = new vscode.Diagnostic(
+                range,
+                `${error.msg}`,
+                this.#convertSeverity(error.severity)
+            );
+
+            diagnostic.source = 'Cppcheck';
+            diagnostic.code = `${error.severity}, ${error.id}`;
+
+            // Add related information for additional locations
+            if (error.location.length > 1) {
+                let relatedLocations = error.location;
+                if (!relatedLocations[0].info) {
+                    relatedLocations = relatedLocations.slice(1);
+                }
+                diagnostic.relatedInformation = await Promise.all(
+                    relatedLocations.map(async loc => {
+                        const line = Math.max(Number(loc.line) - 1, 0);
+                        const column = Math.max(Number(loc.column) - 1, 0);
+                        const locRange = await this.#getLocationWordRange(loc.file, line, column);
+
+                        return new vscode.DiagnosticRelatedInformation(
+                            new vscode.Location(loc.file, locRange),
+                            loc.info || 'Related location'
+                        );
+                    })
+                );
+            }
+
+            if (!diagnosticsByFile.has(primaryLocation.file)) {
+                diagnosticsByFile.set(primaryLocation.file, []);
+            }
+
+            diagnosticsByFile.get(primaryLocation.file)?.push(diagnostic);
+        }));
+
+        return [...diagnosticsByFile.entries()];
+    }
+
+    #convertSeverity(severity: CppcheckErrorSeverity): vscode.DiagnosticSeverity {
+        switch (severity) {
+            case 'information':
+                return vscode.DiagnosticSeverity.Information;
+            case "style":
+            case "portability":
+            case "performance":
+            case 'warning':
+                return vscode.DiagnosticSeverity.Warning;
+            case 'error':
+                return vscode.DiagnosticSeverity.Error;
+            default:
+                return vscode.DiagnosticSeverity.Hint;
+        }
+    }
+
+    #getAbsUri(projectFileUri: vscode.Uri, file: string): vscode.Uri
+    {
+        var projectFile = this.#projectFiles[String(projectFileUri)];
+        var root = projectFile.root?.name ?? "."
+        if (path.isAbsolute(file)) {
+            return vscode.Uri.parse(file);
+        }
+        var workspaceFolder = vscode.workspace.getWorkspaceFolder(projectFileUri)!;
+        return vscode.Uri.joinPath(workspaceFolder.uri, root, file);
+    }
+    
     async #processCppcheckResults(
         _code: number,
         projectFileUri: vscode.Uri,
         result: string,
-        cppcheckProvider: CppcheckTreeDataProvider,
     ) {
         var resultJson = await xml2js.parseStringPromise(result, {
             explicitRoot: false,
@@ -183,54 +294,33 @@ export class CppcheckExtension
             mergeAttrs: true,
         });
 
-        const errors: CppcheckError[] = resultJson?.errors?.error ?? [];
-        errors.forEach(error => {
+        const rawErrors: CppcheckError<string>[] = resultJson?.errors?.error ?? [];
+        const errors: CppcheckError<vscode.Uri>[] = this.#processRawCppcheckErrors(rawErrors, projectFileUri);
+
+        const diagnostics = await this.#convertCppcheckErrorsToDiagnostics(errors);
+        this.#diagnosticCollection.clear();
+        this.#diagnosticCollection.set(diagnostics);
+    }
+
+    #processRawCppcheckErrors(rawErrors: CppcheckError<string>[], projectFileUri: vscode.Uri): CppcheckError<vscode.Uri>[] {
+        return rawErrors.map(error => {
             error.location = ensureArray(error.location);
+            const uriError: CppcheckError<vscode.Uri> = {
+                id: error.id,
+                msg: error.msg,
+                severity: error.severity,
+                verbose: error.verbose,
+                location: error.location.map(l => {
+                    return {
+                        column: l.column,
+                        line: l.line,
+                        info: l.info,
+                        file: this.#getAbsUri(projectFileUri, String(l.file))
+                    };
+                })
+            };
+            return uriError;
         });
-
-        cppcheckProvider.loadErrors(projectFileUri, errors);
-    }
-
-    #registerOpenFileCommand() {
-        this.#context.subscriptions.push(
-            vscode.commands.registerCommand(
-                "cppcheck.openFile",
-                async (file: vscode.Uri, line: number = 0, column: number = 0, item?: vscode.TreeItem) => {
-                    const doc = await vscode.workspace.openTextDocument(file);
-                    const editor = await vscode.window.showTextDocument(doc);
-                    const position = new vscode.Position(line, column);
-                    editor.selections = [new vscode.Selection(position, position)];
-                    editor.revealRange(new vscode.Range(position, position));
-
-                    editor.setDecorations(this.#decoration, [
-                        new vscode.Range(position, new vscode.Position(position.line, position.character + 1))
-                    ]);
-
-                    if (item)
-                    {
-                        vscode.commands.executeCommand("cppcheck.focus")
-                    }
-                }
-            )
-        );
-    }
-
-    #registerShowOutputCommand() {
-        this.#context.subscriptions.push(
-            vscode.commands.registerCommand(
-                "cppcheck.showOutput",
-                () => { this.#output.show() }
-            )
-        );
-    }
-
-    #registerReloadCommand() {
-        this.#context.subscriptions.push(
-            vscode.commands.registerCommand(
-                "cppcheck.reload",
-                () => { this.#collectProjectFiles(); }
-            )
-        );
     }
 
     async #collectProjectFiles() {
@@ -240,8 +330,6 @@ export class CppcheckExtension
             var projectFile = await this.#loadProjectFile(uri);
             this.#projectFiles[String(uri)] = projectFile;
         }
-
-        this.#treeDataProvider.loadProjectFiles(this.#projectFiles);
     }
 
     async #loadProjectFile(

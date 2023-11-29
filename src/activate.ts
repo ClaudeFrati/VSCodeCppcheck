@@ -11,4 +11,3 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 export async function deactivate(): Promise<void> {
     await extension.deactivate();
 }
-

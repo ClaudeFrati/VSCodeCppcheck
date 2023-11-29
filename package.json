@@ -14,68 +14,16 @@
   "categories": [
     "Linters"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/activate.js",
   "contributes": {
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "cppcheck",
-          "title": "Cppcheck",
-          "icon": "assets/icon.svg"
-        }
-      ]
-    },
-    "views": {
-      "cppcheck": [
-        {
-          "id": "cppcheck",
-          "name": "Cppcheck"
-        }
-      ]
-    },
-    "menus": {
-      "view/title": [
-        {
-          "command": "cppcheck.reload",
-          "when": "view == cppcheck",
-          "group": "navigation"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "cppcheck.run",
-          "when": "view == cppcheck && viewItem == projectfile",
-          "group": "inline"
-        }
-      ]
-    },
-    "colors": [
-      {
-        "id": "cppcheck.location",
-        "description": "Color for highlighting current error location in text editor.",
-        "defaults": {
-          "dark": "editorError.foreground",
-          "light": "editorError.border",
-          "highContrast": "editorError.foreground",
-          "highContrastLight": "editorError.foreground"
-        }
-      }
-    ],
     "commands": [
       {
         "command": "cppcheck.run",
         "title": "Cppcheck: Run",
         "icon": "$(run)"
-      },
-      {
-        "command": "cppcheck.openFile",
-        "title": "Cppcheck: Open File"
-      },
-      {
-        "command": "cppcheck.reload",
-        "title": "Cppcheck: Reload",
-        "icon": "$(refresh)"
       }
     ],
     "configuration": [
@@ -138,29 +86,15 @@
         }
       }
     ],
-    "languages": [
-      {
-        "id": "cppcheck",
-        "icon": {
-          "light": "./assets/file_icon_light.svg",
-          "dark": "./assets/file_icon_dark.svg"
-        },
-        "extensions": [
-          ".cppcheck"
-        ],
-        "aliases": [
-          "Cppcheck",
-          "cppcheck"
-        ]
+    "icons": {
+      "plus-plus-check": {
+        "description": "Cppcheck plus-plus-check icon",
+        "default": {
+          "fontPath": "assets/cppcheck.woff",
+          "fontCharacter": "\\E900"
+        }
       }
-    ],
-    "grammars": [
-      {
-        "language": "cppcheck",
-        "scopeName": "text.xml.cppcheck",
-        "path": "./syntaxes/cppcheck.tmLanguage.json"
-      }
-    ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

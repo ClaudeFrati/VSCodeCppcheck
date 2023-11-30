@@ -24,7 +24,7 @@ VSCode Cppcheck is a Visual Studio Code extension that integrates the Cppcheck s
 - Configure how the Cppcheck command will be executed.
     - This can either be configured through:
         - VSCode's built in configurations (e.g. settings.json, workspace settings)
-        - [.vscode/cppcheck.json](#cppcheck.json)
+        - [.vscode/cppcheck.json](#cppcheckjson)
     - All major CLI arguments should be configurable excluding those which alter the output format.
     - *Note*: Many of these options are also configurable through the various project file formats supported by Cppcheck. It's possible to combine these options with a project file (through `config:cppcheck.args.project` / `--project`) in the same way this can be done through the CLI.
 

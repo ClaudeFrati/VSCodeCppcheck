@@ -1,14 +1,16 @@
 # VSCode Cppcheck
 
-## Overview
-
 VSCode Cppcheck is a Visual Studio Code extension that integrates the Cppcheck static analysis tool into VSCode. This extension enables developers to run Cppcheck directly within VSCode, allowing for a seamless and integrated coding experience.
 
 ## Features
 
-- Run Cppcheck: Easily initiate Cppcheck analyses directly from VSCode.
-- Visualize Errors: View and navigate through errors detected by Cppcheck.
-- Link Errors to Source: Directly jump to the exact location of detected errors within your code.
+- **Run Cppcheck**: Easily initiate Cppcheck analyses directly from VSCode. Either through the command `cppcheck.run` or through the `C++ Language Status Item` (visible when a C/C++ file is currently active).
+- **Run On Save**: Optionally, run Cppcheck when a C/C++ file is saved.
+    - For performance, it is strongly recommended to specify `config:cppcheck.buildDir` (or specify `<cppcheck-build-dir>` in `*.cppcheck` project file).
+- **Visualize Errors**: View and navigate through errors detected by Cppcheck via the builtin `Problems` panel.
+- **Link Errors to Source**: Directly jump to the exact location of detected errors within your code. Any additional locations provided by Cppcheck are also included with each error.
+- **View Output**: View the output of the Cppcheck command in the `Cppcheck` output channel in the `Output` panel. This is useful for monitoring long executions and diagnosing configuration issues.
+
 
 ## Installation
 
@@ -17,26 +19,28 @@ VSCode Cppcheck is a Visual Studio Code extension that integrates the Cppcheck s
 
 ## Usage
 
-- Ensure you have at least one Cppcheck project file (*.cppcheck). This can be created using the Cppcheck GUI.
-    - Each *.cppcheck file will be treated as a unique error source.
-    - This is primarily for supporting multi-root workspaces.
-- Optionally, customize the Cppcheck command path using cppcheck.cppcheckPath (defaults to `cppcheck` on `PATH`).
-- To run Cppcheck, select the extension in the sidebar and click the run button located alongsizd the *.cppcheck file.
-- A progress notification will appear during the analysis. Once complete, the tree view will display detected errors.
-- Click on errors to navigate directly to the relevant location in your code.
-    - Some errors may have multiple locations. Expand these errors to see their locations.
+- Ensure Cppcheck is available on host machine.
+- Optionally, configure the Cppcheck command path using `config:cppcheck.cppcheckPath` (defaults to `cppcheck` on `PATH`).
+- Configure how the Cppcheck command will be executed.
+    - This can either be configured through:
+        - VSCode's built in configurations (e.g. settings.json, workspace settings)
+        - [.vscode/cppcheck.json](#cppcheck.json)
+    - All major CLI arguments should be configurable excluding those which alter the output format.
+    - *Note*: Many of these options are also configurable through the various project file formats supported by Cppcheck. It's possible to combine these options with a project file (through `config:cppcheck.args.project` / `--project`) in the same way this can be done through the CLI.
+
+## cppcheck.json
+
+If `.vscode/cppcheck.json` exists, any property defined here will override those configured in the settings.
+
+This is the preferred choice when committing the configuration. All of the same CLI arguments configurable in settings are configurable here as well. A json schema is provided for this file which provides completion and validation.
 
 ## Roadmap
 
 The future of VSCode Cppcheck is exciting, and we have several enhancements in the pipeline:
 
 - [x] **Customizable Cppcheck Command Execution**: Introduce settings to give users more control over how the Cppcheck command is executed.
-- [ ] **Error View Options**: Add a toggle to switch between a tree and list view for displaying errors.
 - [ ] **Inline Suppressions**: Implement functionality to insert inline suppressions directly into the code.
-- [ ] **Welcome Screen for Missing Project File**: Create a welcome screen that guides users when a project file is missing.
-- [ ] **Cppcheck Project File Generator/Configurator**: Explore the possibility of integrating a project file generator/configurator to eliminate the dependency on the Cppcheck GUI. This feature is under consideration as it requires understanding and implementing the Cppcheck project file specification.
-- [ ] **Support Additional Project File Types**: The *.cppcheck file is primarily used by the Cppcheck GUI. The Cppcheck CLI also accepts a variety of other formats in the `--project` argument. Consider implementing direct support for these formats, however, for now users should be able to specify one of those formats within a *.cppcheck file.
-- [ ] **Add Error Count Badges**: Add some error count badges to the tree view for easier error parsing.
+- [ ] **Initialize .vscode/cppcheck.json**: Add a command to aid in creating a `.vscode/cppcheck.json` file.
 
 ## Contributing
 

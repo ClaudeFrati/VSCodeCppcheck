@@ -2,3 +2,6 @@
 .vscode
 src
 tsconfig.json
+tools
+
+!assets/cppcheck.schema.json

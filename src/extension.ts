@@ -1,16 +1,17 @@
 import * as childProcess from "node:child_process";
-import * as fs from "node:fs";
 import * as os from "node:os";
-import { promisify } from "node:util";
 import * as vscode from "vscode";
 import * as xml2js from "xml2js";
 
 import path from "node:path";
-import { CppcheckError, CppcheckErrorSeverity, CppcheckProjectFile } from "./types";
+import { getConfig } from "./config";
+import { CppcheckError, CppcheckErrorSeverity } from "./types";
 import { ensureArray } from "./utils";
 
-const readFilePromise = promisify(fs.readFile);
-
+enum LanguageStatusState {
+    IDLE,
+    RUNNING,
+}
 
 export class CppcheckExtension
 {
@@ -19,49 +20,42 @@ export class CppcheckExtension
     readonly #diagnosticCollection: vscode.DiagnosticCollection;
     readonly #languageStatusItem: vscode.LanguageStatusItem;
 
-    #projectFiles: {[key: string]: CppcheckProjectFile} = {};
+    #cancellationTokenSource?: vscode.CancellationTokenSource;
+    get #cancellationToken(): vscode.CancellationToken | undefined {
+        return this.#cancellationTokenSource?.token;
+    }
 
     constructor(
         context: vscode.ExtensionContext
     )
     {
         this.#context = context;
-        [
-            this.#output = vscode.window.createOutputChannel("Cppcheck"),
-            this.#diagnosticCollection = vscode.languages.createDiagnosticCollection("Cppcheck"),
-            this.#languageStatusItem = this.#createLanguageStatusItem()
-        ].forEach(
+
+        const disposables = [
+            this.#output = this.#createOutputChannel(),
+            this.#diagnosticCollection = this.#createDiagnosticCollection(),
+            this.#languageStatusItem = this.#createLanguageStatusItem(),
+        ];
+        
+        disposables.forEach(
             disposable => context.subscriptions.push(disposable)
         );
     }
 
-    async activate() {
+    activate() {
         this.#registerRunCommand();
-
-        await this.#registerProjectFileWatcher();
-
-        await this.#registerSourceFileWatcher();
-
-        await this.#collectProjectFiles();
+        this.#registerStopCommand();
+        this.#registerSourceFileWatcher();
     }
 
-    async deactivate() {}
+    deactivate() {}
 
-    async #registerProjectFileWatcher(): Promise<void> {
-        var fsWatcher = vscode.workspace.createFileSystemWatcher("**/*.cppcheck", false, false, false);
-        this.#context.subscriptions.push(fsWatcher);
+    #createOutputChannel(): vscode.OutputChannel {
+        return vscode.window.createOutputChannel("Cppcheck");
+    }
 
-        fsWatcher.onDidCreate((uri) => {
-            this.#projectFiles[String(uri)] = this.#loadProjectFile(uri);
-        });
-
-        fsWatcher.onDidChange((uri) => {
-            this.#projectFiles[String(uri)] = this.#loadProjectFile(uri);
-        });
-
-        fsWatcher.onDidDelete((file) => {
-            delete this.#projectFiles[String(file)];
-        });
+    #createDiagnosticCollection(): vscode.DiagnosticCollection {
+        return vscode.languages.createDiagnosticCollection("Cppcheck");
     }
 
     #createLanguageStatusItem(): vscode.LanguageStatusItem {
@@ -79,102 +73,223 @@ export class CppcheckExtension
         return languageStatusItem;
     }
 
-    async #registerSourceFileWatcher(): Promise<void> {
+    #resetCancellationToken(): void {
+        // Out with the old
+        if (this.#cancellationTokenSource) {
+            this.#cancellationTokenSource.cancel();
+            this.#cancellationTokenSource.dispose();
+            const index = this.#context.subscriptions.indexOf(this.#cancellationTokenSource);
+            if (index >= 0) {
+                this.#context.subscriptions.splice(index, 1);
+            }
+        }
+        // In with the new
+        this.#cancellationTokenSource = new vscode.CancellationTokenSource();
+        this.#context.subscriptions.push(this.#cancellationTokenSource);
+    }
+
+    #registerSourceFileWatcher(): void {
         var fsWatcher = vscode.workspace.createFileSystemWatcher("**/*.{cpp,c,hpp,h,tpp,ipp}", false, false, false);
         this.#context.subscriptions.push(fsWatcher);
 
-        fsWatcher.onDidCreate((uri) => {
-            this.#runCppcheck();
+        fsWatcher.onDidCreate(async (uri) => {
+            const config = await getConfig(uri);
+            if (config.runOnSave) {
+                this.#runCppcheck(uri);
+            }
         });
 
-        fsWatcher.onDidChange((uri) => {
-            this.#runCppcheck();
+        fsWatcher.onDidChange(async (uri) => {
+            const config = await getConfig(uri);
+            if (config.runOnSave) {
+                this.#runCppcheck(uri);
+            }
         });
 
-        fsWatcher.onDidDelete((file) => {
-            this.#runCppcheck();
+        fsWatcher.onDidDelete(async (uri) => {
+            const config = await getConfig(uri);
+            if (config.runOnSave && !config.runOnSaveSingle) {
+                const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
+                if (workspaceFolder) {
+                    this.#runCppcheck(workspaceFolder.uri);
+                }
+            }
         });
     }
 
     #registerRunCommand() {
         this.#context.subscriptions.push(
-            vscode.commands.registerCommand("cppcheck.run",
-                (projectFile?: vscode.Uri) => this.#runCppcheck(projectFile)
-            )
+            vscode.commands.registerCommand("cppcheck.run", (uri?: vscode.Uri) => this.#runCppcheck(uri))
         );
     }
 
-    async #runCppcheck(projectFile?: vscode.Uri): Promise<void> {
-        this.#languageStatusItem.busy = true;
-
-        try {
-            await this.#executeCppcheck(projectFile);
-        }
-        catch(err) {
-            if (err instanceof Error) {
-                vscode.window.showErrorMessage(err.message);
-            }
-            else {
-                vscode.window.showErrorMessage(String(err));
-            }
-        }
-
-        this.#languageStatusItem.busy = false;
+    #registerStopCommand() {
+        this.#context.subscriptions.push(
+            vscode.commands.registerCommand("cppcheck.stop", () => this.#stopCppcheck())
+        );
     }
 
-    async #executeCppcheck(projectFileUri_?: vscode.Uri, cancellationToken?: vscode.CancellationToken): Promise<void> {
-        await new Promise<void>(async (resolve, reject) => {
-            const workspaceFolder = vscode.workspace.workspaceFolders![0].uri.path;
-
-            let result = "";
-            const config = vscode.workspace.getConfiguration("cppcheck");
-
-            const cmd = config.get("cppcheckPath") as string;
-            const enableItems = config.get("args.enable") as string[];
-            const inconclusive = config.get("args.inconclusive") as boolean;
-            const inlineSuppr = config.get("args.inlineSuppr") as boolean;
-            const std = config.get("args.std") as string;
-            const jobs = config.get("args.jobs") as number;
-
-            const projectFileUri = projectFileUri_ ?? vscode.Uri.parse(Object.keys(this.#projectFiles)[0]);
-
-            const args = [
-                `--project=${projectFileUri.path}`,
-                "--xml",
-            ];
-
-            if (enableItems.length > 0) {
-                args.push(`--enable=${enableItems.join(",")}`);
+    #setLanguageStatusState(state: LanguageStatusState): void {
+        switch(state) {
+            case LanguageStatusState.IDLE: {
+                this.#languageStatusItem.busy = false;
+                this.#languageStatusItem.detail = "Ready";
+                this.#languageStatusItem.command = {
+                    title: "Run",
+                    command: "cppcheck.run",
+                }
+                break;
             }
-
-            if (inconclusive) {
-                args.push("--inconclusive");
+            case LanguageStatusState.RUNNING: {
+                this.#languageStatusItem.busy = true;
+                this.#languageStatusItem.detail = "Running";
+                this.#languageStatusItem.command = {
+                    title: "Stop",
+                    command: "cppcheck.stop",
+                }
+                break;
             }
+        }
+    }
 
-            if (inlineSuppr) {
-                args.push("--inline-suppr");
-            }
+    async #runCppcheck(sourceUri?: vscode.Uri): Promise<void> {
+        this.#resetCancellationToken();
+        this.#setLanguageStatusState(LanguageStatusState.RUNNING);
 
-            if (std.length > 0) {
-                args.push(`--std=${std}`);
-            }
+        if (!sourceUri) {
+            let workspace : vscode.WorkspaceFolder | undefined;
 
-            args.push("-j")
-            if (jobs <= 0) {
-                const cpus = os.availableParallelism();
-                args.push(`${cpus}`);
+            if (vscode.workspace.workspaceFolders?.length == 1) {
+                workspace = vscode.workspace.workspaceFolders[0];
             }
             else {
-                args.push(`${jobs}`);
+                workspace = await vscode.window.showWorkspaceFolderPick();
             }
 
+            if (workspace) {
+                sourceUri = workspace.uri;
+            }
+        }
+
+        if (sourceUri) {
+            try {
+                await this.#executeCppcheck(sourceUri);
+            }
+            catch(err) {
+                if (err instanceof Error) {
+                    vscode.window.showErrorMessage(err.message);
+                }
+                else {
+                    vscode.window.showErrorMessage(String(err));
+                }
+            }
+        }
+
+        this.#setLanguageStatusState(LanguageStatusState.IDLE);
+    }
+
+    async #stopCppcheck(): Promise<void> {
+        this.#cancellationTokenSource?.cancel();
+    }
+
+    async #executeCppcheck(sourceUri: vscode.Uri): Promise<void> {
+        await new Promise<void>(async (resolve, reject) => {
+            const workspaceFolder = vscode.workspace.getWorkspaceFolder(sourceUri)!.uri;
+
+            let result = "";
+            const config = await getConfig(sourceUri);
+
+            const args = ["--xml"];
+
+            if (config.args.buildDir !== "") {
+                args.push(`--cppcheck-build-dir=${config.args.buildDir}`);
+            }
+
+            if (config.args.checkLevel !== "") {
+                args.push(`--check-level=${config.args.checkLevel}`);
+            }
+
+            if (config.args.enable.length > 0) {
+                args.push(`--enable=${config.args.enable.join(",")}`);
+            }
+
+            for (let fileFilter of config.args.fileFilter) {
+                args.push(`--file-filter=${fileFilter}`);
+            }
+
+            for (let ignore of config.args.exclude) {
+                args.push(`-i`, `${ignore}`);
+            }
+
+            for (let include of config.args.include) {
+                args.push(`-I`, `${include}`);
+            }
+
+            if (config.args.inconclusive) {
+                args.push(`--inconclusive`);
+            }
+
+            if (config.args.inlineSuppr) {
+                args.push(`--inline-suppr`);
+            }
+
+            if (config.args.jobs <= 0) {
+                const cpus = os.availableParallelism();
+                args.push(`-j`, `${cpus}`);
+            }
+            else {
+                args.push(`-j`, `${config.args.jobs}`);
+            }
+
+            for (let library of config.args.library) {
+                args.push(`--library=${library}`);
+            }
+
+            if (config.args.maxCtuDepth >= 0) {
+                args.push(`--max-ctu-depth=${config.args.maxCtuDepth}`);
+            }
+
+            for (let define of config.args.preprocessorDefines) {
+                args.push(`-D${define}`);
+            }
+
+            for (let undefine of config.args.preprocessorUndefines) {
+                args.push(`-U${undefine}`);
+            }
+
+            if (config.args.std.length > 0) {
+                args.push(`--std=${config.args.std}`);
+            }
+
+            for (let suppress of config.args.suppress) {
+                args.push(`--suppress=${suppress}`);
+            }
+
+            if (
+                config.runOnSaveSingle &&
+                /\.(cpp|hpp|c|h|tpp|ipp)$/.test(sourceUri.fsPath)
+            ) {
+                args.push(sourceUri.fsPath);
+            }
+            else {
+                for (let source of config.args.sources) {
+                    args.push(`${source}`);
+                }
+
+                if (config.args.project !== "") {
+                    args.push(`--project=${config.args.project}`);
+                }
+            }
+
+            this.#output.appendLine(`${config.cppcheckPath} ${args.join(" ")}`);
+
             const child = childProcess.spawn(
-                cmd, args, {
-                    cwd: workspaceFolder,
+                config.cppcheckPath, args, {
+                    cwd: workspaceFolder.fsPath,
                 }
             );
 
-            cancellationToken?.onCancellationRequested(() => {
+            this.#cancellationToken?.onCancellationRequested(() => {
                 child.kill();
             });
 
@@ -182,18 +297,56 @@ export class CppcheckExtension
             child.stdout.on("data", (chunk: Buffer) => this.#output.append(chunk.toString()));
             child.stderr.on("data", (chunk: Buffer) => result += chunk.toString());
             child.on("close", (code: number) => {
-                this.#output.append("DONE!");
-                try {
-                    this.#processCppcheckResults(code, projectFileUri, result);
-                    resolve();
+                if (this.#cancellationToken?.isCancellationRequested) {
+                    this.#output.appendLine("CANCELED!");
+                    return resolve();
                 }
-                catch {
-                    reject();
-                }
+                this.#output.appendLine("DONE!");
+                this.#processCppcheckResults(code, workspaceFolder, result).then(resolve).catch(reject);
             });
         });
     }
-    
+
+    async #processCppcheckResults(
+        _code: number,
+        rootUri: vscode.Uri,
+        result: string,
+    ) {
+        var resultJson = await xml2js.parseStringPromise(result, {
+            explicitRoot: false,
+            explicitArray: false,
+            mergeAttrs: true,
+        });
+
+        const rawErrors: CppcheckError<string>[] = resultJson?.errors?.error ?? [];
+        const errors: CppcheckError<vscode.Uri>[] = this.#processRawCppcheckErrors(rawErrors, rootUri);
+
+        const diagnostics = await this.#convertCppcheckErrorsToDiagnostics(errors);
+        this.#diagnosticCollection.clear();
+        this.#diagnosticCollection.set(diagnostics);
+    }
+
+    #processRawCppcheckErrors(rawErrors: CppcheckError<string>[], rootUri: vscode.Uri): CppcheckError<vscode.Uri>[] {
+        return rawErrors.map(error => {
+            error.location = ensureArray(error.location);
+            const uriError: CppcheckError<vscode.Uri> = {
+                id: error.id,
+                msg: error.msg,
+                severity: error.severity,
+                verbose: error.verbose,
+                location: error.location.map(l => {
+                    return {
+                        column: l.column,
+                        line: l.line,
+                        info: l.info,
+                        file: this.#getAbsUri(rootUri, String(l.file))
+                    };
+                })
+            };
+            return uriError;
+        });
+    }
+
     async #getLocationWordRange(uri: vscode.Uri, line: number, column: number): Promise<vscode.Range> {
         const document = await vscode.workspace.openTextDocument(uri);
         return (
@@ -272,80 +425,12 @@ export class CppcheckExtension
         }
     }
 
-    #getAbsUri(projectFileUri: vscode.Uri, file: string): vscode.Uri
+    #getAbsUri(rootUri: vscode.Uri, file: string): vscode.Uri
     {
-        var projectFile = this.#projectFiles[String(projectFileUri)];
-        var root = projectFile.root?.name ?? "."
         if (path.isAbsolute(file)) {
             return vscode.Uri.parse(file);
         }
-        var workspaceFolder = vscode.workspace.getWorkspaceFolder(projectFileUri)!;
-        return vscode.Uri.joinPath(workspaceFolder.uri, root, file);
-    }
-    
-    async #processCppcheckResults(
-        _code: number,
-        projectFileUri: vscode.Uri,
-        result: string,
-    ) {
-        var resultJson = await xml2js.parseStringPromise(result, {
-            explicitRoot: false,
-            explicitArray: false,
-            mergeAttrs: true,
-        });
-
-        const rawErrors: CppcheckError<string>[] = resultJson?.errors?.error ?? [];
-        const errors: CppcheckError<vscode.Uri>[] = this.#processRawCppcheckErrors(rawErrors, projectFileUri);
-
-        const diagnostics = await this.#convertCppcheckErrorsToDiagnostics(errors);
-        this.#diagnosticCollection.clear();
-        this.#diagnosticCollection.set(diagnostics);
-    }
-
-    #processRawCppcheckErrors(rawErrors: CppcheckError<string>[], projectFileUri: vscode.Uri): CppcheckError<vscode.Uri>[] {
-        return rawErrors.map(error => {
-            error.location = ensureArray(error.location);
-            const uriError: CppcheckError<vscode.Uri> = {
-                id: error.id,
-                msg: error.msg,
-                severity: error.severity,
-                verbose: error.verbose,
-                location: error.location.map(l => {
-                    return {
-                        column: l.column,
-                        line: l.line,
-                        info: l.info,
-                        file: this.#getAbsUri(projectFileUri, String(l.file))
-                    };
-                })
-            };
-            return uriError;
-        });
-    }
-
-    async #collectProjectFiles() {
-        this.#projectFiles = {};
-        var uris = await vscode.workspace.findFiles("**/*.cppcheck");
-        for (let uri of uris) {
-            var projectFile = await this.#loadProjectFile(uri);
-            this.#projectFiles[String(uri)] = projectFile;
-        }
-    }
-
-    async #loadProjectFile(
-        uri: vscode.Uri,
-    ): Promise<CppcheckProjectFile>
-    {
-        var projectFileXml = (await readFilePromise(uri.path)).toString();
-
-        var projectFile : CppcheckProjectFile = await xml2js.parseStringPromise(projectFileXml, {
-            explicitRoot: false,
-            explicitArray: false,
-            mergeAttrs: true,
-        });
-        
-        projectFile.$uri = uri;
-        return projectFile;
+        return vscode.Uri.joinPath(rootUri, file);
     }
 
 }

@@ -1,9 +1,11 @@
 {
   "name": "cppcheck",
   "displayName": "VSCode Cppcheck",
-  "description": "an extension to collect and display Cppcheck results in VSCode",
+  "description": "A VSCode extension to integrate Cppcheck",
   "version": "0.0.3",
   "publisher": "alevine",
+  "author": "Aaron Levine <ald.levine@gmail.com>",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/Aldlevine/VSCodeCppcheck.git"
@@ -18,12 +20,34 @@
     "onStartupFinished"
   ],
   "main": "./out/activate.js",
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "schema": "node --no-warnings tools/generate-schema.mjs",
+    "compile": "npm run schema && tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.3",
+    "@types/vscode": "^1.84.2",
+    "@types/xml2js": "^0.4.14",
+    "@vscode/vsce": "^2.22.0",
+    "tslint": "^6.1.3",
+    "typescript": "^5.3.2"
+  },
+  "dependencies": {
+    "xml2js": "^0.6.2"
+  },
   "contributes": {
     "commands": [
       {
         "command": "cppcheck.run",
         "title": "Cppcheck: Run",
         "icon": "$(run)"
+      },
+      {
+        "command": "cppcheck.stop",
+        "title": "Cppcheck: Stop",
+        "icon": "$(close)"
       }
     ],
     "configuration": [
@@ -33,7 +57,43 @@
           "cppcheck.cppcheckPath": {
             "type": "string",
             "markdownDescription": "The path to the cppcheck command, defaults to `cppcheck` on `PATH`",
-            "default": "cppcheck"
+            "default": "cppcheck",
+            "scope": "resource"
+          },
+          "cppcheck.runOnSave": {
+            "type": "boolean",
+            "markdownDescription": "Run Cppcheck when a C++ source file has changed",
+            "default": false,
+            "scope": "resource"
+          },
+          "cppcheck.runOnSaveSingle": {
+            "type": "boolean",
+            "markdownDescription": "Should run Cppcheck only on current file when saved. Bypasses project and sources.",
+            "default": false,
+            "scope": "resource"
+          },
+          "cppcheck.args.sources": {
+            "type": "array",
+            "markdownDescription": "The files and directories containing project source files, relative to project root.",
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "scope": "resource"
+          },
+          "cppcheck.args.buildDir": {
+            "type": "string",
+            "markdownDescription": "The cppcheck build dir, relative to workspace root (passed to cli via `--cppcheck-build-dir`)",
+            "scope": "resource"
+          },
+          "cppcheck.args.checkLevel": {
+            "type": "string",
+            "markdownDescription": "The amount of checking (passed to cli via `--check-level`)",
+            "enum": [
+              "normal",
+              "exhaustive"
+            ],
+            "scope": "resource"
           },
           "cppcheck.args.enable": {
             "type": "array",
@@ -53,22 +113,87 @@
             },
             "default": [
               "all"
-            ]
+            ],
+            "scope": "resource"
+          },
+          "cppcheck.args.fileFilter": {
+            "type": "array",
+            "markdownDescription": "A list of patterns matching which files to analyze (passed to cli via `--file-filter`)",
+            "items": {
+              "type": "string"
+            },
+            "scope": "resource"
+          },
+          "cppcheck.args.exclude": {
+            "type": "array",
+            "markdownDescription": "A list of directories or files to exclude from checking (passed to cli via `-i`)",
+            "items": {
+              "type": "string"
+            },
+            "scope": "resource"
+          },
+          "cppcheck.args.include": {
+            "type": "array",
+            "markdownDescription": "A list of include paths to search for headers (passed to cli via `-I`)",
+            "items": {
+              "type": "string"
+            },
+            "scope": "resource"
           },
           "cppcheck.args.inconclusive": {
             "type": "boolean",
             "markdownDescription": "Report inconclusive analyses (passed to cli via `--inconclusive`)",
-            "default": false
+            "default": false,
+            "scope": "resource"
           },
           "cppcheck.args.inlineSuppr": {
             "type": "boolean",
             "markdownDescription": "Enable inline suppressions (passed to cli via `--inline-suppr`)",
-            "default": true
+            "default": true,
+            "scope": "resource"
           },
           "cppcheck.args.jobs": {
             "type": "integer",
             "markdownDescription": "The number of jobs to spawn (passed to cli via `-j`).\n\nSpecify 0 to select # based on host system.",
-            "default": 0
+            "default": 0,
+            "scope": "resource"
+          },
+          "cppcheck.args.library": {
+            "type": "array",
+            "markdownDescription": "The library `*.cfg` files to include (passed to cli via `--library`)",
+            "items": {
+              "type": "string"
+            },
+            "scope": "resource"
+          },
+          "cppcheck.args.maxCtuDepth": {
+            "type": "integer",
+            "markdownDescription": "Max depth of whole program analysis (passed to cli via `--max-ctu-depth`)",
+            "default": 2,
+            "scope": "resource"
+          },
+          "cppcheck.args.preprocessorDefines": {
+            "type": "array",
+            "markdownDescription": "Preprocessor defines (passed to cli via `-D`)",
+            "items": {
+              "type": "string"
+            },
+            "scope": "resource"
+          },
+          "cppcheck.args.preprocessorUndefines": {
+            "type": "array",
+            "markdownDescription": "Preprocessor \"un\"-defines (passed to cli via `-U`)",
+            "items": {
+              "type": "string"
+            },
+            "scope": "resource"
+          },
+          "cppcheck.args.project": {
+            "type": "string",
+            "markdownDescription": "The project file, relative to workspace root (passed to cli via `--project`)",
+            "default": "",
+            "pattern": "^$|\\.(cppcheck|sln|vcxproj|json|bpr)$",
+            "scope": "resource"
           },
           "cppcheck.args.std": {
             "type": "string",
@@ -81,9 +206,25 @@
               "c++11",
               "c++17",
               "c++20"
-            ]
+            ],
+            "scope": "resource"
+          },
+          "cppcheck.args.suppress": {
+            "type": "array",
+            "markdownDescription": "Suppress the warnings that match [error id]:[filename]:[line] (passed to cli via `--suppress`)",
+            "items": {
+              "type": "string",
+              "pattern": ".*:?.*:?.*"
+            },
+            "scope": "resource"
           }
         }
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": "./vscode/cppcheck.json",
+        "url": "./assets/cppcheck.schema.json"
       }
     ],
     "icons": {
@@ -95,23 +236,5 @@
         }
       }
     }
-  },
-  "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
-  },
-  "author": "Aaron Levine <ald.levine@gmail.com>",
-  "license": "MIT",
-  "devDependencies": {
-    "@types/node": "^20.9.3",
-    "@types/vscode": "^1.84.2",
-    "@types/xml2js": "^0.4.14",
-    "@vscode/vsce": "^2.22.0",
-    "tslint": "^6.1.3",
-    "typescript": "^5.3.2"
-  },
-  "dependencies": {
-    "xml2js": "^0.6.2"
   }
 }

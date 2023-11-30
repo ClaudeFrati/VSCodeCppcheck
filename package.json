@@ -2,7 +2,7 @@
   "name": "cppcheck",
   "displayName": "VSCode Cppcheck",
   "description": "A VSCode extension to integrate Cppcheck",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "publisher": "alevine",
   "author": "Aaron Levine <ald.levine@gmail.com>",
   "license": "MIT",

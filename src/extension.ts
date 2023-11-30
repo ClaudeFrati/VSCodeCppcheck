@@ -20,6 +20,8 @@ export class CppcheckExtension
     readonly #diagnosticCollection: vscode.DiagnosticCollection;
     readonly #languageStatusItem: vscode.LanguageStatusItem;
 
+    #cppcheckProcess?: childProcess.ChildProcess;
+
     #cancellationTokenSource?: vscode.CancellationTokenSource;
     get #cancellationToken(): vscode.CancellationToken | undefined {
         return this.#cancellationTokenSource?.token;
@@ -36,7 +38,7 @@ export class CppcheckExtension
             this.#diagnosticCollection = this.#createDiagnosticCollection(),
             this.#languageStatusItem = this.#createLanguageStatusItem(),
         ];
-        
+
         disposables.forEach(
             disposable => context.subscriptions.push(disposable)
         );
@@ -77,11 +79,6 @@ export class CppcheckExtension
         // Out with the old
         if (this.#cancellationTokenSource) {
             this.#cancellationTokenSource.cancel();
-            this.#cancellationTokenSource.dispose();
-            const index = this.#context.subscriptions.indexOf(this.#cancellationTokenSource);
-            if (index >= 0) {
-                this.#context.subscriptions.splice(index, 1);
-            }
         }
         // In with the new
         this.#cancellationTokenSource = new vscode.CancellationTokenSource();
@@ -153,6 +150,13 @@ export class CppcheckExtension
     }
 
     async #runCppcheck(sourceUri?: vscode.Uri): Promise<void> {
+        this.#stopCppcheck();
+
+        // Just a spin-lock
+        while (this.#cppcheckProcess) {
+            await new Promise<void>(resolve => setTimeout(() => resolve(), 0));
+        }
+
         this.#resetCancellationToken();
         this.#setLanguageStatusState(LanguageStatusState.RUNNING);
 
@@ -283,26 +287,30 @@ export class CppcheckExtension
 
             this.#output.appendLine(`${config.cppcheckPath} ${args.join(" ")}`);
 
-            const child = childProcess.spawn(
+            this.#cppcheckProcess = childProcess.spawn(
                 config.cppcheckPath, args, {
                     cwd: workspaceFolder.fsPath,
                 }
             );
 
             this.#cancellationToken?.onCancellationRequested(() => {
-                child.kill();
+                this.#cppcheckProcess?.kill();
             });
 
-            child.on("error", reject);
-            child.stdout.on("data", (chunk: Buffer) => this.#output.append(chunk.toString()));
-            child.stderr.on("data", (chunk: Buffer) => result += chunk.toString());
-            child.on("close", (code: number) => {
+            this.#cppcheckProcess.on("error", reject);
+            this.#cppcheckProcess.stdout?.on("data", (chunk: Buffer) => this.#output.append(chunk.toString()));
+            this.#cppcheckProcess.stderr?.on("data", (chunk: Buffer) => result += chunk.toString());
+            this.#cppcheckProcess.on("close", (code: number) => {
                 if (this.#cancellationToken?.isCancellationRequested) {
                     this.#output.appendLine("CANCELED!");
+                    this.#cppcheckProcess = undefined;
                     return resolve();
                 }
+
                 this.#output.appendLine("DONE!");
-                this.#processCppcheckResults(code, workspaceFolder, result).then(resolve).catch(reject);
+                this.#processCppcheckResults(code, workspaceFolder, result).then(resolve).catch(reject).finally(() => {
+                    this.#cppcheckProcess = undefined;
+                });
             });
         });
     }

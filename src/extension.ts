@@ -2,6 +2,7 @@ import * as childProcess from "node:child_process";
 import * as os from "node:os";
 import * as vscode from "vscode";
 import * as xml2js from "xml2js";
+import * as glob from "glob";
 
 import path from "node:path";
 import { getConfig } from "./config";
@@ -276,9 +277,10 @@ export class CppcheckExtension
                 args.push(sourceUri.fsPath);
             }
             else {
-                for (let source of config.args.sources) {
-                    args.push(`${source}`);
-                }
+                const sources = await glob.glob(config.args.sources, {
+                    cwd: workspaceFolder.fsPath
+                });
+                args.push(...sources);
 
                 if (config.args.project !== "") {
                     args.push(`--project=${config.args.project}`);
@@ -326,7 +328,10 @@ export class CppcheckExtension
             mergeAttrs: true,
         });
 
-        const rawErrors: CppcheckError<string>[] = resultJson?.errors?.error ?? [];
+        let rawErrors: CppcheckError<string>[] = resultJson?.errors?.error ?? [];
+        if (!Array.isArray(rawErrors)) {
+            rawErrors = [rawErrors];
+        }
         const errors: CppcheckError<vscode.Uri>[] = this.#processRawCppcheckErrors(rawErrors, rootUri);
 
         const diagnostics = await this.#convertCppcheckErrorsToDiagnostics(errors);

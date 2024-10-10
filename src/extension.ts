@@ -441,7 +441,7 @@ export class CppcheckExtension
     #getAbsUri(rootUri: vscode.Uri, file: string): vscode.Uri
     {
         if (path.isAbsolute(file)) {
-            return vscode.Uri.parse(file);
+            return vscode.Uri.file(file);
         }
         return vscode.Uri.joinPath(rootUri, file);
     }
